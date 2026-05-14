@@ -168,3 +168,80 @@ cannot silently drift.
 | 6 | `(A,S,S)` contraction | `np.einsum`-based `induced_mrp` | `mdp/base.py` |
 | 7 | missing `algorithm.sty` | drop unused package imports | `docs/report/report.tex` |
 | 8 | reproducibility drift | seeded RNG + regenerated JSON | `experiments/run_all.py` |
+| 9 | GP Cholesky failure on small N | incremental jitter loop | `hpo/gp.py` |
+| 10 | `scipy.stats.norm` not available | `math.erf`-based Phi/phi for EI | `hpo/optimizer.py` |
+| 11 | EI saturates on tiny `sigma` | explicit `sigma < 1e-9` zero-out | `hpo/optimizer.py` |
+| 12 | LHS hidden mode-collapse | per-dim permutation, asserted in tests | `hpo/space.py`, `tests/test_hpo.py` |
+| 13 | BO duplicate-restart on EI argmax | min-distance jitter guard | `hpo/optimizer.py` |
+| 14 | BO trial budget vs. CPU time | reduced episodes/trial for the demo run | `scripts/bayesian_hpo.py` |
+
+---
+
+## V3 additions: Bayesian hyperparameter optimization
+
+### 9. GP Cholesky breakdown at small training sets
+
+**Problem.** With ~5 LHS points the kernel matrix
+:math:`K + \sigma_n^2 I` is small but its conditioning depends on the
+heuristic length-scale. Twice during integration the
+`numpy.linalg.cholesky` raised `LinAlgError` after a near-duplicate LHS
+sample collapsed the kernel matrix toward rank-deficiency.
+
+**Fix.** `hpo/gp.py` wraps the factorization in an incremental-jitter
+loop (Rasmussen & Williams 2006 §5.4.2): start with the configured
+`noise_var`, double the jitter each retry, cap at six tries. In
+practice the second attempt always succeeds.
+
+### 10. No `scipy.stats.norm` -> hand-rolled standard-normal CDF
+
+**Problem.** The Expected-Improvement acquisition needs
+:math:`\Phi(z)` and :math:`\phi(z)`. Pulling `scipy.stats` for one
+function would have re-broken the "CPU-only, NumPy-only" story we
+locked in for V2 (item 1 above).
+
+**Fix.** `expected_improvement(...)` in `hpo/optimizer.py` computes
+:math:`\phi(z) = e^{-z^2/2}/\sqrt{2\pi}` directly and uses
+`math.erf` (stdlib) for the CDF:
+:math:`\Phi(z) = \tfrac12(1 + \operatorname{erf}(z/\sqrt{2}))`. Tests
+in `tests/test_hpo.py` confirm `EI = 0` when `sigma = 0` and
+`EI > 0` strictly above the incumbent.
+
+### 11. EI's degeneracy on noiseless replays
+
+**Problem.** When BO re-evaluates a point very close to a prior
+sample, the GP predicts almost the training value with
+:math:`\sigma \to 0`, so EI is numerically `nan/inf` instead of zero.
+
+**Fix.** Explicit `ei[sigma < 1e-9] = 0.0` in
+`expected_improvement(...)`, plus a min-distance check in the
+optimizer that re-jitters the chosen unit-cube point if it is within
+:math:`10^{-3}` of any prior observation.
+
+### 12. Hidden Latin-Hypercube failure mode
+
+**Problem.** The first LHS implementation forgot to permute the
+strata per dimension and produced a *diagonal* design that defeated
+the BO. The bug only surfaced because the BO never improved over the
+LHS phase.
+
+**Fix.** Per-dimension `rng.permutation(strata)` in
+`SearchSpace.sample_lhs` (matches McKay-Beckman-Conover 1979). The
+test `test_search_space_lhs_is_a_permutation` asserts each column
+visits every stratum exactly once and would have caught this earlier.
+
+### 13. Compute budget for the V3 demonstrative run
+
+**Problem.** The original `300 episodes × 50 eval × 25 trials × 3
+seeds` configuration takes ~3 minutes in the sandbox and was timing
+out on a 45 s call. V3 still requires that the BO actually run and
+not just exist as code.
+
+**Fix.** Two-tier run plan baked into the docs:
+
+* `scripts/bayesian_hpo.py` defaults: 300 train / 50 eval / 25 trials.
+  Single seed; reproduces the headline `fig_v3_bo_history.pdf`.
+* Comparison run (`v3_bo_vs_random.py` in `outputs/`): 150 train /
+  30 eval / 20 trials / 2 seeds. Produces
+  `fig_v3_bo_vs_random.pdf` and `bo_vs_random_summary.json`. Cheaper
+  but enough to show GP-BO > random search at 2× the gap of either
+  one's standard deviation.

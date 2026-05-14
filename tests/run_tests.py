@@ -38,12 +38,24 @@ _pytest.raises = _raises
 sys.modules["pytest"] = _pytest
 
 from tests import test_mdp  # noqa: E402
+from tests import test_hpo  # noqa: E402
 
 TESTS = [
     test_mdp.test_markov_process_row_stochastic,
     test_mdp.test_mrp_closed_form_matches_iterative,
     test_mdp.test_degenerate_swap_matrix,
     test_mdp.test_mdp_induced_mrp_matches_direct,
+    # V3 Bayesian-HPO unit tests.
+    test_hpo.test_uniform_param_roundtrip,
+    test_hpo.test_log_uniform_param_roundtrip,
+    test_hpo.test_int_param_range,
+    test_hpo.test_search_space_lhs_is_a_permutation,
+    test_hpo.test_rbf_kernel_symmetry_and_diagonal,
+    test_hpo.test_gp_interpolates_noise_free,
+    test_hpo.test_expected_improvement_zero_when_sigma_zero,
+    test_hpo.test_expected_improvement_positive_above_incumbent,
+    test_hpo.test_bo_finds_optimum_of_quadratic,
+    test_hpo.test_qlearning_objective_smoke,
 ]
 
 

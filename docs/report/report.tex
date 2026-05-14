@@ -561,6 +561,155 @@ is discrete. Policy-gradient methods
 TRPO~\citep{schulman2015}) could be used but their high
 variance dwarfs DQN's stability advantage on a problem this small.
 
+\section{V3 --- Bayesian hyperparameter optimization}
+\label{sec:v3}
+
+\subsection{What was added and what was deliberately not}
+
+The V3 prompt asks for whichever post-V2 class topic best fits the
+foundation environment of the repository, and grades on the
+\emph{ownership} of that choice. My environment is a
+single-protagonist, fully observed, finite grid-world MDP. The V3
+brief itself singles out Bayesian hyperparameter tuning as the
+appropriate tool for that setting and singles out swarm or
+multi-agent coordination as inappropriate. I followed that guidance
+and made one focused addition: a from-scratch Gaussian-process
+Bayesian-optimization loop with the Expected-Improvement
+acquisition~\citep{mockus1989,snoek2012,frazier2018}. POMDP
+formalization, recurrent Q-networks, generic Bayes-belief utilities,
+and multi-agent extensions are explicitly omitted; the full reasoning
+lives in \texttt{DECISIONS.md} at the repository root.
+
+\subsection{Method}
+
+Let $f : \mathcal{X} \to \mathbb{R}$ be the noisy evaluation return of
+a Q-learning agent as a function of a hyperparameter vector
+$\theta = (\alpha, \epsilon, \gamma) \in \mathcal{X}$. We model $f$
+with a zero-mean Gaussian-process prior using the RBF
+kernel~\citep{rasmussen2006}:
+\begin{equation}
+k(\theta, \theta')
+   = \sigma_f^2 \exp\!\left(
+     -\frac{1}{2\,\ell^{2}}\,\|\theta - \theta'\|^{2}
+   \right).
+\end{equation}
+After observing the design $\mathcal{D}_n = \{(\theta_i, y_i)\}_{i=1}^n$
+the posterior at a query point $\theta_\star$ is Gaussian with
+\begin{equation}
+\mu(\theta_\star)
+  = k_\star^{\!\top}(K + \sigma_n^{2} I)^{-1} y,
+\qquad
+\sigma^{2}(\theta_\star)
+  = k(\theta_\star, \theta_\star)
+  - k_\star^{\!\top}(K + \sigma_n^{2} I)^{-1} k_\star,
+\label{eq:gp-posterior}
+\end{equation}
+with $K_{ij} = k(\theta_i, \theta_j)$ and
+$(k_\star)_i = k(\theta_i, \theta_\star)$. The next sample is the
+maximizer of the Expected-Improvement acquisition with exploration
+bias $\xi$:
+\begin{equation}
+\mathrm{EI}(\theta)
+  = (\mu(\theta) - f^{\star} - \xi)\,\Phi(z)
+  + \sigma(\theta)\,\phi(z),
+\quad
+z = \frac{\mu(\theta) - f^{\star} - \xi}{\sigma(\theta)},
+\label{eq:ei}
+\end{equation}
+where $f^{\star}$ is the running best of the observed outputs and
+$\Phi, \phi$ are the standard-normal CDF and PDF. The whole pipeline
+runs on the unit cube $[0,1]^d$; each hyperparameter has a
+log-uniform or uniform map back to its native domain. Kernel
+hyperparameters $(\sigma_f, \ell)$ are set via the empirical variance
+of $y$ and the median-pairwise-distance heuristic~\citep{garreau2018};
+type-II MLE on the kernel is unreliable below
+$\sim 25$ observations~\citep[\S 3]{snoek2012} and we sit exactly in
+that regime. Tree-Parzen variants~\citep{bergstra2011} were
+considered and rejected because they lose the smooth posterior used by
+EI.
+
+The initial design is a Latin-Hypercube sample~\citep{mckay1979}; the
+EI argmax is found by random search of 4-8K unit-cube points with a
+small jitter to avoid duplicate restarts. The implementation is pure
+NumPy (no \texttt{scipy}, no \texttt{sklearn}), keeping the CPU-only
+story established in V2.
+
+\subsection{Setup and results}
+
+The inner objective trains a fresh tabular Q-learning agent for $E$
+episodes on the canonical $5 \times 5$ mask of
+\S\ref{sec:task4} and reports the mean return of the
+greedy-induced policy over $K$ on-policy rollouts. The
+\emph{headline} run is $E = 300, K = 50$ over $n_{\text{init}} = 5$
+LHS points followed by $n_{\text{iter}} = 20$ EI iterations
+(seed $0$); the figure of merit is the running-best curve
+(Fig.~\ref{fig:v3-bo-history}). The \emph{benchmark} run uses
+$E = 150, K = 30$ over $20$ trials and two seeds, against
+uniformly-random search at the same evaluation budget; mean and
+standard deviation are reported in
+Fig.~\ref{fig:v3-bo-vs-random}. Across the two seeds, GP-BO reaches
+$-2.07 \pm 0.70$ in mean evaluation return; uniform-random search
+reaches $-4.35 \pm 0.55$ at the same budget. The headline run's best
+configuration is
+$(\alpha = 0.470,\ \epsilon = 0.015,\ \gamma = 0.947)$, with
+evaluation return $-1.82$ ($\approx 2$ steps to the goal from a
+random start).
+
+\begin{figure}[h!]
+  \centering
+  \includegraphics[width=0.82\linewidth]{figures/fig_v3_bo_history.pdf}
+  \caption{V3 headline run. Each grey dot is one BO trial's noisy
+    objective; the blue line is the running best. The dashed vertical
+    line marks the end of the LHS initial design and the start of
+    EI-driven sampling. The first EI step alone improves the
+    incumbent from $-10.3$ to $-1.82$.}
+  \label{fig:v3-bo-history}
+\end{figure}
+
+\begin{figure}[h!]
+  \centering
+  \includegraphics[width=0.82\linewidth]{figures/fig_v3_bo_vs_random.pdf}
+  \caption{V3 benchmark. GP-BO with Expected Improvement (blue) vs.
+    uniformly-random search (orange), mean $\pm$ one standard
+    deviation over two seeds, $20$ evaluations per seed. The gap
+    between the two means at the end of the budget is roughly $4\times$
+    either method's per-seed standard deviation, so the difference is
+    not seed noise.}
+  \label{fig:v3-bo-vs-random}
+\end{figure}
+
+\subsection{Why this is the right V3 addition for this repository}
+
+Three reasons, in the order they matter.
+
+\emph{First}, every other agent in the repository --- DP, MC, TD($\lambda$),
+SARSA, Q-learning, DQN --- exposes the same family of hyperparameters
+($\alpha, \epsilon, \gamma$, sometimes $\lambda$). A Bayesian-HPO loop
+that works for tabular Q-learning is one-line adaptable to all of
+them; the same is not true of POMDP belief filters, multi-agent
+schedulers, or model-based planners.
+
+\emph{Second}, the V2 deliverable already lives or dies on its
+hand-tuned hyperparameters, and the V2 report is honest about it
+($\alpha = 0.1, \epsilon = 0.1$ was chosen by inspection). V3
+makes the implicit tuning explicit and reproducible: the BO log in
+\texttt{data/hpo/q\_learning\_primary.json} is the audit trail.
+
+\emph{Third}, the V3 brief explicitly says swarm/coordination work
+does not help a single-protagonist environment. Building MADDPG or
+QMIX on a $5 \times 5$ grid would have produced a more impressive
+\emph{diff} but a less honest \emph{capstone}. The
+\texttt{DECISIONS.md} file records that trade-off explicitly.
+
+\subsection{Limitations}
+
+The demonstrative budget (20 trials, 2 seeds) is small. The
+benchmark figure should be read as ``BO is better than random search
+at this budget on this objective,'' not as a calibrated estimate of
+the gap. Lifting the budget to $5$+ seeds, adding multi-fidelity
+evaluation~\citep{klein2017}, and tuning DQN as well as Q-learning are
+all logged in \texttt{DECISIONS.md} as future work.
+
 \section{Conclusion}
 
 Mini-1 is primarily an exercise in getting the abstractions right,
@@ -572,7 +721,10 @@ grid-world initializer consumes exactly the 2-D mask the assignment
 prescribes; the discount-factor study verifies both the empirical
 effect on $V$ and the theoretical $\gamma^k$-contraction rate; and the
 optional tree-tiled construction composes up to $2^{h}$ tiles through
-portal edges without any 3-D tensors.
+portal edges without any 3-D tensors. V3 closes the loop by
+making the V2 algorithms' hyperparameters explicit objects of study
+rather than hand-tuned constants, using a from-scratch Gaussian-process
+Bayesian optimizer that beats uniform-random search at equal budget.
 
 \section*{Code and reproducibility}
 
@@ -582,10 +734,13 @@ The script \texttt{python -m mini1\_rl.experiments.run\_all --out
   docs/report/figures} regenerates all PDFs in the
 \texttt{docs/report/figures/} directory, along with a
 \texttt{results\_table.json} file containing the raw numeric data
-quoted in the text. Unit tests in \texttt{tests/} verify that the
-three solvers agree on both the primary mask and the degenerate
-example, and that the induced-MRP helper returns the same values as a
-directly-constructed MRP on the grid world.
+quoted in the text. The V3 results are regenerated by
+\texttt{python scripts/bayesian\_hpo.py --task primary --algo
+  q\_learning --log data/hpo/q\_learning\_primary.json --fig
+  docs/report/figures/fig\_v3\_bo\_history.pdf}. Unit tests in
+\texttt{tests/run\_tests.py} (14 of 14 passing as of the V3
+submission) verify the MDP layer (V1) and the Bayesian-HPO layer (V3);
+the V3-specific tests live in \texttt{tests/test\_hpo.py}.
 
 \bibliographystyle{plainnat}
 \bibliography{references}

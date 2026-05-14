@@ -2,11 +2,16 @@
 
 **Course.** EECS 590 Advanced Topics (Reinforcement Learning), Spring 2026.
 **Author.** Ismail (igargouri1@gmail.com).
-**Scope.** Mini-1 + V1 + V2 combined deliverable: finite Markov processes
-(MP, MRP, MDP), three value-convergence solvers, grid-world builders from
-2-D reward masks, a tree-tiled MRP (Task 7), classical RL agents (MC, TD,
-SARSA, Q-learning) and a Deep Q-Network (DQN), organised as a professional
-research repository.
+**Scope.** Mini-1 + V1 + V2 + **V3** combined deliverable: finite Markov
+processes (MP, MRP, MDP), three value-convergence solvers, grid-world
+builders from 2-D reward masks, a tree-tiled MRP (Task 7), classical RL
+agents (MC, TD, SARSA, Q-learning), a Deep Q-Network (DQN), and a
+from-scratch **Gaussian-process Bayesian hyperparameter optimization**
+loop (V3) — organised as a professional research repository.
+
+> **What V3 added** is documented in `DECISIONS.md` (the V3
+> transparency file: implemented vs. deliberately skipped, with
+> justifications). Section 10 of this README is the short version.
 
 ---
 
@@ -21,6 +26,7 @@ research repository.
 7.  Development notes and citations
 8.  Collaborations and external material
 9.  Limitations and future work
+10. V3: Bayesian hyperparameter optimization
 
 ---
 
@@ -60,6 +66,12 @@ python scripts/train.py --agent dqn --mask primary --episodes 2000
 
 # Evaluate any saved agent:
 python scripts/evaluate.py --checkpoint checkpoints/dqn_primary.pt
+
+# V3: Bayesian hyperparameter optimization on Q-learning:
+python scripts/bayesian_hpo.py --task primary --algo q_learning \
+    --n-init 5 --n-iter 20 \
+    --log data/hpo/q_learning_primary.json \
+    --fig docs/report/figures/fig_v3_bo_history.pdf
 ```
 
 The paper (`docs/report/report.pdf`, compiled from `report.tex`) is
@@ -89,6 +101,11 @@ mini1_rl_repo/
 │   ├── buffers/replay.py         # experience replay + disk persistence (V2)
 │   ├── nn/architectures.py       # MLP and ConvQNet
 │   ├── utils/                    # viz, raster, saliency helpers
+│   ├── hpo/                      # Bayesian hyperparameter optimization (V3)
+│   │   ├── space.py              #   search-space primitives (U / log-U / int)
+│   │   ├── gp.py                 #   pure-NumPy GP regression, RBF kernel
+│   │   ├── optimizer.py          #   GP-BO loop with Expected Improvement
+│   │   └── objectives.py         #   QLearning -> scalar objective wrapper
 │   └── experiments/
 │       ├── masks.py              # assignment masks and Task-7 tiles
 │       └── run_all.py            # reproduces every figure in the report
@@ -98,11 +115,11 @@ mini1_rl_repo/
 │   ├── report/report.tex         # LaTeX source of the written report
 │   ├── report/references.bib     # real BibTeX citations
 │   ├── report/figures/           # generated PDFs + results_table.json
-│   ├── technical-challenges.md   # V2 engineering notes
+│   ├── technical-challenges.md   # V2 + V3 engineering notes
 │   └── notes/project-log.md      # chronological decision log
-├── notebooks/                    # empty scaffold for exploration
+├── DECISIONS.md                  # V3 transparency: what was/wasn't done
 ├── checkpoints/                  # trained agent state-dicts
-└── data/                         # generated rollouts, replay buffers
+└── data/                         # rollouts, replay buffers, hpo/ logs
 ```
 
 ## 4. Task map
@@ -199,3 +216,24 @@ keep or drop) lives in `docs/technical-challenges.md`.
   \citealp{lillicrap2016,fujimoto2018,haarnoja2018}) and policy-gradient
   methods (REINFORCE, PPO; \citealp{williams1992,schulman2017ppo}) are
   discussed in the report but not implemented — future Mini-2 scope.
+
+## 10. V3: Bayesian hyperparameter optimization
+
+The V3 deliverable adds a from-scratch Gaussian-process Bayesian
+optimization (GP-BO) module that tunes the canonical Q-learning agent
+on the primary 5×5 mask. The rationale, in one sentence, is that V3
+explicitly flags Bayesian HPO as the right tool for a
+single-protagonist environment and flags multi-agent / swarm methods
+as the *wrong* tool — so I implemented one and deliberately did not
+implement the other. The full reasoning, including the V2-onwards
+topics I considered and rejected (POMDPs, recurrent Q-nets,
+multi-agent), is in `DECISIONS.md`.
+
+Empirically, with a budget of 20 trials and two seeds, GP-BO with
+Expected Improvement attains a mean evaluation return of −2.07 ± 0.70
+on the primary mask versus −4.35 ± 0.55 for uniformly-random search
+under the same budget (Section V3 of the report;
+`data/hpo/bo_vs_random_summary.json`). The module is pure NumPy: no
+scipy, no scikit-learn, no Optuna. References (Mockus 1989; Snoek,
+Larochelle & Adams 2012; Frazier 2018; Rasmussen & Williams 2006;
+Bergstra et al. 2011) are in `docs/report/references.bib`.
