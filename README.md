@@ -237,3 +237,9 @@ under the same budget (Section V3 of the report;
 scipy, no scikit-learn, no Optuna. References (Mockus 1989; Snoek,
 Larochelle & Adams 2012; Frazier 2018; Rasmussen & Williams 2006;
 Bergstra et al. 2011) are in `docs/report/references.bib`.
+
+## Local recording workflow (October 2026)
+
+A recording workflow has been prepared in the parent workspace's `DEMO_GUIDE.md`.
+These are bounded demonstrations, not a claim that every experimental workflow has been reproduced.
+Keep AI-assisted implementation attribution and the documented limitations in public descriptions.
